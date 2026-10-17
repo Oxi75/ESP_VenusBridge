@@ -33,13 +33,14 @@ static const char PAGE_INDEX[] PROGMEM = R"rawliteral(<!doctype html><html lang=
 <div class="card"><h2>Last response from the battery</h2><pre id="raw"></pre></div>
 </main><script>
 const $=id=>document.getElementById(id);
+const MODES={Auto:'Self-consumption',AI:'AI optimization',UPS:'UPS',Manual:'Manual',Passive:'Passive'};
 function rows(t,r){$(t).innerHTML=r.map(x=>'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td></tr>').join('')}
 async function upd(){try{const s=await(await fetch('/api/status')).json(),v=s.venus;
 $('dev').textContent=v.device?('· '+v.device):'';
 $('soc').textContent=v.esValid?v.soc+' %':'–';
 $('bp').textContent=v.esValid?v.batPower+' W':'–';
 $('grid').textContent=v.esValid?v.ongridPower+' W':'–';
-$('mode').textContent=v.modeValid?v.mode:'–';
+$('mode').textContent=v.modeValid?(MODES[v.mode]||v.mode):'–';
 rows('det',[['Reachable',v.online?'<span class="ok">yes</span>':'<span class="bad">no</span>'],
 ['Remaining energy',v.batCapWh+' Wh'],['Charge/discharge power',v.batPower+' W'+(v.batPowerCalc?' (calculated)':'')],
 ['PV power',v.pvPower+' W'],['Off-grid power',v.offgridPower+' W'],

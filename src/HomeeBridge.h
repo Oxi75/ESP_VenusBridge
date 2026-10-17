@@ -19,7 +19,11 @@ public:
 
 private:
     void publish(nodeAttributes *a, double value);
-    static void onModeChanged(nodeAttributes *a);
+    void publishMode(VenusMode mode);
+    void handleModeSwitch(int index, bool on);
+    static void onModeSwitch(nodeAttributes *a);
+
+    static const uint8_t MODE_SWITCHES = 4;
 
     virtualHomee *vhih = nullptr;
     node *dev = nullptr;
@@ -36,7 +40,8 @@ private:
     nodeAttributes *aGridIn = nullptr;
     nodeAttributes *aTemp = nullptr;
     nodeAttributes *aCtPower = nullptr;
-    nodeAttributes *aMode = nullptr;
+    nodeAttributes *aModeSw[MODE_SWITCHES] = {};   // one on/off switch per mode (radio buttons)
 
-    static volatile int pendingMode;   // mode set by homee, -1 = none
+    static HomeeBridge *instance;
+    static volatile int pendingSwitch;   // switch event from homee: index * 2 + on, -1 = none
 };

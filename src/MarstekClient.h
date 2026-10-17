@@ -73,6 +73,7 @@ public:
 
     // Request a mode change (Auto, AI, UPS). Sent in the next free slot.
     bool requestMode(VenusMode mode);
+    bool modeChangePending() const { return wantedMode != VenusMode::Unknown; }
 
     const VenusState &state() const { return st; }
     bool isConfigured() const { return configured; }

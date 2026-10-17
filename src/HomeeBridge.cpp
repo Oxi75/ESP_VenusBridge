@@ -6,7 +6,12 @@
 
 static const uint32_t NODE_ID = 10;
 
-volatile int HomeeBridge::pendingMode = -1;
+HomeeBridge *HomeeBridge::instance = nullptr;
+volatile int HomeeBridge::pendingSwitch = -1;
+
+// Mode switches in homee, in the order of the Marstek app
+static const VenusMode SWITCH_MODES[] = {VenusMode::Auto, VenusMode::AI, VenusMode::UPS, VenusMode::Manual};
+static const char *const SWITCH_NAMES[] = {"Eigenverbrauch", "KI-Optimierung", "UPS", "Manuell"};
 
 // Set the ID in the constructor (fixed IDs, so homee recognizes the attributes after updates).
 // Attribute names are intentionally German (shown in the homee app).
@@ -25,6 +30,7 @@ static nodeAttributes *addAttr(node *n, uint16_t type, uint32_t id, const char *
 void HomeeBridge::begin(const String &vhihName, const String &deviceName, MarstekClient &client)
 {
     mc = &client;
+    instance = this;
     vhih = new virtualHomee(vhihName);
 
     dev = new node(NODE_ID, CANodeProfileEnergyMeter, deviceName);
@@ -40,9 +46,14 @@ void HomeeBridge::begin(const String &vhihName, const String &deviceName, Marste
     aGridIn = addAttr(dev, CAAttributeTypeTotalEnergyInputGrid, ++id, "Bezug gesamt", "kWh", 0, 1000000, 0.01);
     aTemp = addAttr(dev, CAAttributeTypeDeviceTemperature, ++id, "Temperatur", "°C", -20, 80, 0.1);
     aCtPower = addAttr(dev, CAAttributeTypeTotalCurrentEnergyUse, ++id, "Hausverbrauch (CT)", "W", -10000, 10000);
-    aMode = addAttr(dev, CAAttributeTypeMode, ++id, "Betriebsmodus", "", 0, 4);
-    aMode->setEditable(1);
-    aMode->setCallback(&HomeeBridge::onModeChanged);
+    ++id;   // 1011 was the former CAAttributeTypeMode attribute, do not reuse
+    for (uint8_t i = 0; i < MODE_SWITCHES; i++)
+    {
+        aModeSw[i] = addAttr(dev, CAAttributeTypeOnOff, ++id, SWITCH_NAMES[i], "", 0, 1);
+        aModeSw[i]->setInstance(i + 1);
+        aModeSw[i]->setEditable(1);
+        aModeSw[i]->setCallback(&HomeeBridge::onModeSwitch);
+    }
 
     vhih->addNode(dev);
     vhih->start();
@@ -50,9 +61,35 @@ void HomeeBridge::begin(const String &vhihName, const String &deviceName, Marste
 }
 
 // Called from the WebSocket context -> only remember, processing happens in loop()
-void HomeeBridge::onModeChanged(nodeAttributes *a)
+void HomeeBridge::onModeSwitch(nodeAttributes *a)
 {
-    pendingMode = (int)(a->getTargetValue() + 0.5);
+    if (!instance)
+        return;
+    for (uint8_t i = 0; i < MODE_SWITCHES; i++)
+        if (instance->aModeSw[i] == a)
+            pendingSwitch = i * 2 + (a->getTargetValue() >= 0.5 ? 1 : 0);
+}
+
+// Radio-button logic: exactly one switch is on (all off only in the API-only mode "Passive")
+void HomeeBridge::handleModeSwitch(int index, bool on)
+{
+    VenusMode wanted = SWITCH_MODES[index];
+    if (on && mc->requestMode(wanted))
+    {
+        publishMode(wanted);   // optimistic, confirmed by the read-back of ES.GetMode
+        return;
+    }
+    if (on)
+        Serial.printf("[HOM] mode %s cannot be set directly\n", venusModeName(wanted));
+    // switching off the active mode or a mode that cannot be set -> back to the actual mode
+    const VenusState &s = mc->state();
+    publishMode(s.modeValid ? s.mode : VenusMode::Unknown);
+}
+
+void HomeeBridge::publishMode(VenusMode mode)
+{
+    for (uint8_t i = 0; i < MODE_SWITCHES; i++)
+        publish(aModeSw[i], SWITCH_MODES[i] == mode ? 1 : 0);
 }
 
 size_t HomeeBridge::clientCount() const
@@ -74,21 +111,20 @@ void HomeeBridge::loop()
     if (!vhih)
         return;
 
-    int m = pendingMode;
-    if (m >= 0)
+    int sw = pendingSwitch;
+    if (sw >= 0)
     {
-        pendingMode = -1;
-        VenusMode wanted = (VenusMode)m;
-        if (!mc->requestMode(wanted))
-        {
-            Serial.printf("[HOM] mode %d cannot be set directly\n", m);
-            // reset homee to the actual mode
-            aMode->setTargetValue(aMode->getCurrentValue());
-            vhih->updateAttribute(aMode);
-        }
+        pendingSwitch = -1;
+        handleModeSwitch(sw / 2, sw % 2);
     }
 
     const VenusState &s = mc->state();
+
+    // Mode switches: not while a mode change is still pending (avoids flickering back to
+    // the old mode). Checked on every pass, so a rejected/failed change is reverted as well.
+    if (s.modeValid && !mc->modeChangePending())
+        publishMode(s.mode);
+
     if (s.changeCounter == lastChange)
         return;
     lastChange = s.changeCounter;
@@ -108,6 +144,4 @@ void HomeeBridge::loop()
         publish(aTemp, s.batTemp);
     if (s.emValid)
         publish(aCtPower, s.emTotalPower);
-    if (s.modeValid && s.mode != VenusMode::Unknown)
-        publish(aMode, (double)(uint8_t)s.mode);
 }

@@ -2,7 +2,7 @@
 
 Read and control a **Marstek Venus** plug-in battery from the **homee** smart home system – locally, without cloud – using a small ESP32/ESP8266 board as a bridge.
 
-**Current version: 0.02** – see the [Changelog](#changelog).
+**Current version: 0.05** – see the [Changelog](#changelog).
 
 ---
 
@@ -47,7 +47,7 @@ Read and control a **Marstek Venus** plug-in battery from the **homee** smart ho
    - Every 10th cycle: `Marstek.GetDevice` (model, firmware) and `Bat.GetStatus` (temperature, rated capacity).
    - Missing responses are retransmitted; after 3 failed requests in a row the battery is marked as *not reachable*.
 2. **Providing the values to homee** – Using the [homee-api-esp32](https://github.com/Oxi75/homee-api-esp32) library, the bridge acts as a *virtual homee* ("homee in homee", port 7681). Your real homee connects to it and shows the battery as a device with the attributes listed in [homee integration](#homee-integration).
-3. **Controlling the battery** – Changing the operating mode in homee (Auto / AI / UPS) is forwarded to the battery via `ES.SetMode` and read back for verification.
+3. **Controlling the battery** – Changing the operating mode in homee (Self-consumption / AI optimization / UPS) is forwarded to the battery via `ES.SetMode` and read back for verification.
 4. **Web interface** – A built-in web page shows all live values and lets you configure WiFi, the battery and homee, and update the firmware.
 
 All settings are stored on the ESP in `/config.json` (LittleFS). No data leaves your local network.
@@ -211,19 +211,30 @@ After pairing, homee shows one device (default name *Venus E*) with the followin
 | Bezug gesamt | Total energy taken from the grid | kWh |
 | Temperatur | Battery temperature | °C |
 | Hausverbrauch (CT) | Total power measured by the CT meter | W |
-| Betriebsmodus | Operating mode (editable) | – |
+| Eigenverbrauch | Mode switch: self-consumption | on/off |
+| KI-Optimierung | Mode switch: AI optimization | on/off |
+| UPS | Mode switch: UPS | on/off |
+| Manuell | Mode switch: manual (display only) | on/off |
 
 ### Operating mode
 
-| Value | Mode | Can be set from homee |
-|---|---|---|
-| 0 | Auto | ✅ |
-| 1 | AI | ✅ |
-| 2 | UPS | ✅ |
-| 3 | Manual | ❌ display only |
-| 4 | Passive | ❌ display only |
+homee cannot show a selection list with custom names, so the operating mode is shown as **four on/off switches that work like radio buttons**. Their order matches the Marstek app:
 
-Manual and Passive need additional parameters (schedules, power values) that are not supported yet. If you select them in homee, the attribute is reset to the current mode.
+| # | Switch (homee) | Marstek app | Open API | Can be set from homee |
+|---|---|---|---|---|
+| 1 | Eigenverbrauch | Self-consumption | `Auto` | ✅ |
+| 2 | KI-Optimierung | AI optimization | `AI` | ✅ |
+| 3 | UPS | UPS | `UPS` | ✅ |
+| 4 | Manuell | Manual | `Manual` | ❌ display only |
+
+- Exactly one switch is on – the one matching the current mode of the battery.
+- Turning a switch **on** changes the mode of the battery; the other switches are turned off automatically. If the battery rejects the change, the switches return to the actual mode.
+- Turning the active switch **off** is not possible (the battery always has a mode); it is switched back on immediately.
+- *Manuell* is **display only**: it is shown when the battery is in manual mode, but cannot be selected from homee – switching it on is reset to the actual mode. Reason: switching to Manual via the Open API **overwrites the schedules configured in the Marstek app**. This was tested in version 0.04, where only the mode was sent without a schedule (`manual_cfg`) – the schedules were overwritten nevertheless. Activate the manual mode in the Marstek app instead.
+- A mode change in the Marstek app appears in homee after the next polling cycle.
+- In the API-only mode `Passive` all four switches are off.
+
+In homeegrams, use e.g. "KI-Optimierung is switched on" as trigger or "switch on UPS" as action.
 
 ---
 
@@ -270,6 +281,19 @@ HTTP endpoints (no authentication – use the bridge only in a trusted network):
 ---
 
 ## Changelog
+
+### 0.05 (2026-10-17)
+
+- Reverted the experimental change from 0.04: *Manuell* is display only again. Test result: activating Manual via the Open API overwrites the schedules configured in the Marstek app, even without a schedule in the request. Use the Marstek app to activate the manual mode.
+
+### 0.04 (2026-10-17)
+
+- homee: the mode switch *Manuell* can now be switched on (experimental). The bridge sends `ES.SetMode` with mode `Manual` but without a schedule (`manual_cfg`), so the schedules from the Marstek app are kept.
+
+### 0.03 (2026-10-17)
+
+- homee: the operating mode is now shown as four on/off switches with radio-button behaviour (Eigenverbrauch, KI-Optimierung, UPS, Manuell) instead of the mode attribute, which homee displayed as "Überwachungsmodus" without proper value names. **Remove the device in homee and pair it again** after the update so the old attribute disappears.
+- Web interface: modes are shown with the names used in the Marstek app.
 
 ### 0.02 (2026-10-17)
 

@@ -53,6 +53,8 @@ void MarstekClient::begin(const String &ip, uint16_t p, uint16_t pollIntervalSec
 
 bool MarstekClient::requestMode(VenusMode mode)
 {
+    // Manual is intentionally not supported: switching to Manual via the Open API overwrites
+    // the schedules configured in the Marstek app (even without manual_cfg, tested in 0.04).
     if (mode != VenusMode::Auto && mode != VenusMode::AI && mode != VenusMode::UPS)
         return false;
     wantedMode = mode;
