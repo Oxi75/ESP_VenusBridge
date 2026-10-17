@@ -40,6 +40,7 @@ private:
     nodeAttributes *aGridIn = nullptr;
     nodeAttributes *aTemp = nullptr;
     nodeAttributes *aCtPower = nullptr;
+    nodeAttributes *aBatFw = nullptr;
     nodeAttributes *aModeSw[MODE_SWITCHES] = {};   // one on/off switch per mode (radio buttons)
 
     static HomeeBridge *instance;

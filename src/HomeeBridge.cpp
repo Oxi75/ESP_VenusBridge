@@ -4,6 +4,10 @@
 #include <virtualHomee/homee_defines.h>
 #include <virtualHomee/homee_icons.h>
 
+#ifndef VB_VERSION
+#define VB_VERSION "0"
+#endif
+
 static const uint32_t NODE_ID = 10;
 
 HomeeBridge *HomeeBridge::instance = nullptr;
@@ -54,6 +58,13 @@ void HomeeBridge::begin(const String &vhihName, const String &deviceName, Marste
         aModeSw[i]->setEditable(1);
         aModeSw[i]->setCallback(&HomeeBridge::onModeSwitch);
     }
+    // Firmware versions as numbers (bridge: VB_VERSION "0.06" -> 0.06, battery: "ver" from Marstek.GetDevice)
+    nodeAttributes *aBridgeFw = addAttr(dev, CAAttributeTypeFirmwareRevision, ++id, "Firmware Bridge", "", 0, 100, 0.01);
+    aBridgeFw->setInstance(1);
+    aBridgeFw->setCurrentValue(atof(VB_VERSION));
+    aBridgeFw->setTargetValue(atof(VB_VERSION));
+    aBatFw = addAttr(dev, CAAttributeTypeFirmwareRevision, ++id, "Firmware Speicher", "", 0, 100000);
+    aBatFw->setInstance(2);
 
     vhih->addNode(dev);
     vhih->start();
@@ -144,4 +155,6 @@ void HomeeBridge::loop()
         publish(aTemp, s.batTemp);
     if (s.emValid)
         publish(aCtPower, s.emTotalPower);
+    if (s.fwVersion > 0)
+        publish(aBatFw, s.fwVersion);
 }

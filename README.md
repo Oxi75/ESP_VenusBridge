@@ -2,7 +2,7 @@
 
 Read and control a **Marstek Venus** plug-in battery from the **homee** smart home system – locally, without cloud – using a small ESP32/ESP8266 board as a bridge.
 
-**Current version: 0.05** – see the [Changelog](#changelog).
+**Current version: 0.07** – see the [Changelog](#changelog).
 
 ---
 
@@ -30,7 +30,8 @@ Read and control a **Marstek Venus** plug-in battery from the **homee** smart ho
 10. [Status LED](#status-led)
 11. [Troubleshooting](#troubleshooting)
 12. [Changelog](#changelog)
-13. [License](#license)
+13. [Acknowledgements](#acknowledgements)
+14. [License](#license)
 
 ---
 
@@ -56,8 +57,8 @@ All settings are stored on the ESP in `/config.json` (LittleFS). No data leaves 
 
 ## Supported batteries
 
-- Developed and tested with the **Marstek Venus E** (incl. the *E mini* variant).
-- Other batteries of the **Marstek Venus series** should work as well, **as long as they support the Marstek Open API**. Feedback on other models is welcome.
+- Tested **only** with the **Marstek Venus E mini**. No other battery has been tested so far.
+- Other batteries of the **Marstek Venus series** should work as well, **as long as they support the Marstek Open API**.
 
 ---
 
@@ -114,7 +115,9 @@ pio run -e esp12e-ota -t upload
 
 `upload_port` is `venusbridge.local` by default. If you changed the hostname or mDNS does not work in your network, set `upload_port` in `platformio.ini` to the hostname or IP address of the bridge.
 
-### Via the web interface
+### Via the web interface (OTA)
+
+> ⚠️ The firmware update via the web interface has **not been tested** yet.
 
 Build the firmware (`pio run -e <env>`), open **Settings → Firmware update** in the web interface, choose `.pio/build/<env>/firmware.bin` and click **Upload**. The bridge restarts automatically.
 
@@ -215,6 +218,8 @@ After pairing, homee shows one device (default name *Venus E*) with the followin
 | KI-Optimierung | Mode switch: AI optimization | on/off |
 | UPS | Mode switch: UPS | on/off |
 | Manuell | Mode switch: manual (display only) | on/off |
+| Firmware Bridge | Firmware version of the bridge (e.g. 0.07) | – |
+| Firmware Speicher | Firmware version of the battery (`ver` from `Marstek.GetDevice`) | – |
 
 ### Operating mode
 
@@ -282,6 +287,15 @@ HTTP endpoints (no authentication – use the bridge only in a trusted network):
 
 ## Changelog
 
+### 0.07 (2026-10-17)
+
+- homee: new attributes *Firmware Bridge* and *Firmware Speicher* (firmware versions of the bridge and the battery). Remove the device in homee and pair it again to see them.
+- README: clarified test status (only tested with Venus E mini, firmware update via the web interface not tested).
+
+### 0.06 (2026-10-17)
+
+- README: added acknowledgements.
+
 ### 0.05 (2026-10-17)
 
 - Reverted the experimental change from 0.04: *Manuell* is display only again. Test result: activating Manual via the Open API overwrites the schedules configured in the Marstek app, even without a schedule in the request. Use the Marstek app to activate the manual mode.
@@ -310,6 +324,12 @@ First public version.
 - WiFi with DHCP or static IP, access point with captive portal for configuration.
 - OTA updates via PlatformIO (espota).
 - Hardware: ESP32-C3 SuperMini (tested), ESP8266 ESP-12E (prepared, not tested).
+
+---
+
+## Acknowledgements
+
+This project was developed with the kind support of [Claude Code](https://claude.com/claude-code) by Anthropic.
 
 ---
 
