@@ -66,3 +66,17 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VS Code (keep only extensions.json - the rest contains local paths)
+.vscode/*
+!.vscode/extensions.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
