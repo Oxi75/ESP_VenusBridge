@@ -61,7 +61,7 @@ static const char PAGE_CONFIG[] PROGMEM = R"rawliteral(<!doctype html><html lang
 <body><main><h1>VenusBridge · Settings</h1><nav><a href="/">Status</a><a href="/config">Settings</a></nav>
 <form id="f"><div class="card"><h2>WiFi</h2>
 <label>SSID</label><input name="ssid" maxlength="32" required>
-<label>Password (leave empty = unchanged)</label><input name="password" type="password" maxlength="64">
+<label>WiFi password (leave empty = unchanged)</label><input name="password" type="password" maxlength="64">
 <label>Hostname</label><input name="hostname" maxlength="32">
 <label>IP address</label><select name="dhcp"><option value="1">automatic (DHCP)</option><option value="0">static</option></select>
 <div id="st"><label>IP</label><input name="ip"><label>Gateway</label><input name="gateway"><label>Subnet mask</label><input name="subnet"><label>DNS (optional)</label><input name="dns"></div>
@@ -72,18 +72,51 @@ static const char PAGE_CONFIG[] PROGMEM = R"rawliteral(<!doctype html><html lang
 </div><div class="card"><h2>homee</h2>
 <label>virtual homee name (homee ID when pairing)</label><input name="homeeId" maxlength="32">
 <label>homee device name</label><input name="nodeName" maxlength="40">
-</div><button type="submit">Save &amp; restart</button></form>
+</div><div class="card"><h2>Security</h2>
+<label>Admin password for saving and firmware update (leave empty = unchanged, min. 5 characters)</label><input name="adminPw" type="password" maxlength="32" autocomplete="new-password">
+<label>Repeat admin password</label><input name="adminPw2" type="password" maxlength="32" autocomplete="new-password">
+<div id="clr" style="display:none"><label><input name="adminPwClear" type="checkbox" style="width:auto"> Remove admin password (no protection)</label></div>
+</div><div id="au" class="card" style="display:none"><h2>Authentication</h2>
+<label>Current admin password (required for saving and firmware update)</label><input name="auth" type="password" maxlength="32" autocomplete="current-password">
+</div><button type="submit">Save &amp; restart</button><button type="button" id="rs" class="sec">Restart</button>
+<button type="button" id="dl" class="sec">Download config</button><button type="button" id="ul" class="sec">Upload config</button>
+<input type="file" id="cf" accept=".json,application/json" style="display:none"></form>
+<p id="msg"></p>
 <div class="card" style="margin-top:14px"><h2>Firmware update</h2>
 <input type="file" id="fw" accept=".bin"><button id="up" class="sec">Upload</button><span id="ups"></span></div>
-<p id="msg"></p></main><script>
-const f=document.getElementById('f'),st=document.getElementById('st'),msg=document.getElementById('msg');
+</main><script>
+const $=id=>document.getElementById(id),f=$('f'),st=$('st'),msg=$('msg');
 function tg(){st.style.display=f.dhcp.value=='1'?'none':'block'}f.dhcp.onchange=tg;
-fetch('/api/config').then(r=>r.json()).then(c=>{for(const k in c){if(f[k])f[k].value=k=='dhcp'?(c[k]?'1':'0'):c[k]}tg()});
-f.onsubmit=async e=>{e.preventDefault();msg.textContent='Saving...';
-const r=await fetch('/api/config',{method:'POST',body:new URLSearchParams(new FormData(f))});
+function hdr(){return f.auth.value?{'X-Auth':encodeURIComponent(f.auth.value)}:{}}
+// Fills the form fields from an object; unknown keys and passwords are ignored
+function fill(c){let n=0;for(const k in c){const e=f.elements[k],v=c[k];
+if(!e||!e.name||['password','checkbox','file'].includes(e.type))continue;
+if(k=='dhcp'){if(typeof v!='boolean'&&v!==0&&v!==1)continue;e.value=v?'1':'0'}
+else{if(typeof v!='string'&&typeof v!='number')continue;e.value=v}n++}tg();return n}
+fetch('/api/config').then(r=>r.json()).then(c=>{fill(c);$('clr').style.display=c.adminPwSet?'block':'none';$('au').style.display=c.authRequired?'block':'none'});
+f.onsubmit=async e=>{e.preventDefault();const p=f.adminPw.value;
+if(p&&p.length<5){msg.textContent='Admin password must have at least 5 characters';return}
+if(p!=f.adminPw2.value){msg.textContent='Admin passwords do not match';return}
+const d=new FormData(f);d.delete('auth');d.delete('adminPw2');d.set('adminPwClear',f.adminPwClear.checked?'1':'0');
+msg.textContent='Saving...';
+const r=await fetch('/api/config',{method:'POST',headers:hdr(),body:new URLSearchParams(d)});
 msg.textContent=r.ok?'Saved. Device is restarting...':'Error: '+await r.text();};
-document.getElementById('up').onclick=()=>{const fl=document.getElementById('fw').files[0];if(!fl)return;
+$('rs').onclick=async()=>{if(!confirm('Restart the bridge?'))return;
+const r=await fetch('/api/restart',{method:'POST'});msg.textContent=r.ok?'Device is restarting...':'Error: '+await r.text()};
+$('dl').onclick=async()=>{try{const c=await(await fetch('/api/config')).json();delete c.authRequired;delete c.adminPwSet;
+try{c._version=(await(await fetch('/api/status')).json()).version}catch(e){}
+const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(c,null,2)],{type:'application/json'}));
+a.download='venusbridge-config.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+msg.textContent='Configuration downloaded (without passwords).'}catch(e){msg.textContent='Download failed'}};
+$('ul').onclick=()=>$('cf').click();
+$('cf').onchange=()=>{const fl=$('cf').files[0];if(!fl)return;const rd=new FileReader();
+rd.onload=()=>{let c=null;try{c=JSON.parse(rd.result)}catch(e){}
+if(!c||typeof c!='object'||Array.isArray(c))msg.textContent='Invalid file - no fields changed';
+else msg.textContent=fill(c)+' values loaded - click "Save & restart" to apply them';$('cf').value=''};
+rd.onerror=()=>{msg.textContent='File cannot be read - no fields changed';$('cf').value=''};rd.readAsText(fl)};
+$('up').onclick=()=>{const fl=$('fw').files[0];if(!fl)return;
 const d=new FormData();d.append('firmware',fl);const x=new XMLHttpRequest();x.open('POST','/update');
-x.upload.onprogress=e=>{document.getElementById('ups').textContent=' '+Math.round(e.loaded*100/e.total)+' %'};
-x.onload=()=>{document.getElementById('ups').textContent=' '+x.responseText};x.send(d)};
+const h=hdr();for(const k in h)x.setRequestHeader(k,h[k]);
+x.upload.onprogress=e=>{$('ups').textContent=' '+Math.round(e.loaded*100/e.total)+' %'};
+x.onload=()=>{$('ups').textContent=' '+x.responseText};x.send(d)};
 </script></body></html>)rawliteral";

@@ -2,7 +2,7 @@
 
 Read and control a **Marstek Venus** plug-in battery from the **homee** smart home system – locally, without cloud – using a small ESP32/ESP8266 board as a bridge.
 
-**Current version: 0.07** – see the [Changelog](#changelog).
+**Current version: 0.09** – see the [Changelog](#changelog).
 
 ---
 
@@ -46,12 +46,12 @@ Read and control a **Marstek Venus** plug-in battery from the **homee** smart ho
 1. **Reading the battery** – The bridge polls the battery over the local network using the **Marstek Open API** (JSON-RPC over UDP, default port 30000). Only one request is in flight at a time, with a 3 s gap between requests.
    - Every polling cycle (default 30 s, min. 10 s): `ES.GetStatus` (state of charge, power values, energy counters), `ES.GetMode` (operating mode), `EM.GetStatus` (CT meter).
    - Every 10th cycle: `Marstek.GetDevice` (model, firmware) and `Bat.GetStatus` (temperature, rated capacity).
-   - Missing responses are retransmitted; after 3 failed requests in a row the battery is marked as *not reachable*.
+   - Missing responses are retransmitted; after 3 failed requests in a row the battery is marked as *not reachable*. While it is not reachable, only one probe request per polling interval is sent; as soon as it answers again, normal polling resumes.
 2. **Providing the values to homee** – Using the [homee-api-esp32](https://github.com/Oxi75/homee-api-esp32) library, the bridge acts as a *virtual homee* ("homee in homee", port 7681). Your real homee connects to it and shows the battery as a device with the attributes listed in [homee integration](#homee-integration).
 3. **Controlling the battery** – Changing the operating mode in homee (Self-consumption / AI optimization / UPS) is forwarded to the battery via `ES.SetMode` and read back for verification.
 4. **Web interface** – A built-in web page shows all live values and lets you configure WiFi, the battery and homee, and update the firmware.
 
-All settings are stored on the ESP in `/config.json` (LittleFS). No data leaves your local network.
+All settings are stored on the ESP in `/config.json` (LittleFS). The passwords (WiFi and admin password) are **not** part of this file; they are stored XOR-obfuscated in the (emulated) EEPROM. This is obfuscation, not strong encryption – it keeps the passwords out of plain sight, but cannot protect them against someone with physical access to the board. No data leaves your local network.
 
 ---
 
@@ -115,11 +115,17 @@ pio run -e esp12e-ota -t upload
 
 `upload_port` is `venusbridge.local` by default. If you changed the hostname or mDNS does not work in your network, set `upload_port` in `platformio.ini` to the hostname or IP address of the bridge.
 
+If an **admin password** is set in the settings, OTA uploads from PlatformIO require it as well. Uncomment and fill in the line in the OTA environment of `platformio.ini`:
+
+```ini
+upload_flags = --auth=<admin password>
+```
+
 ### Via the web interface (OTA)
 
 > ⚠️ The firmware update via the web interface has **not been tested** yet.
 
-Build the firmware (`pio run -e <env>`), open **Settings → Firmware update** in the web interface, choose `.pio/build/<env>/firmware.bin` and click **Upload**. The bridge restarts automatically.
+Build the firmware (`pio run -e <env>`), open **Settings → Firmware update** in the web interface, choose `.pio/build/<env>/firmware.bin` and click **Upload**. The bridge restarts automatically. If an admin password is set, enter it in the *Current admin password* field first.
 
 ---
 
@@ -171,7 +177,7 @@ The status LED blinks fast while the access point is active.
 |---|---|---|
 | **WiFi** | | |
 | SSID | – | Name of your 2.4 GHz WiFi (required). |
-| Password | – | WiFi password. Leave empty to keep the stored password. It is never shown again. |
+| WiFi password | – | WiFi password. Leave empty to keep the stored password. It is never shown again. |
 | Hostname | `venusbridge` | Network name of the bridge (mDNS `venusbridge.local`, OTA). |
 | IP address | automatic (DHCP) | Choose *static* to enter IP, gateway, subnet mask and DNS manually. If DNS is empty, the gateway is used. |
 | **Marstek Venus** | | |
@@ -181,8 +187,23 @@ The status LED blinks fast while the access point is active.
 | **homee** | | |
 | virtual homee name | `venusbridge` | Name of the virtual homee; entered as **homee ID** when pairing with homee. |
 | homee device name | `Venus E` | Name of the battery device shown in homee. |
+| **Security** | | |
+| Admin password | – (no protection) | Protects **Save & restart** and the **firmware update** (web interface and PlatformIO OTA). Either empty (no protection) or 5 – 32 characters. Leave empty to keep the stored password; enter it twice to change it. Tick *Remove admin password* to switch the protection off. |
 
-**Save & restart** stores the settings and restarts the bridge. Settings are kept across firmware updates; new parameters introduced by an update are added with their default values.
+### Buttons
+
+| Button | Password required | Description |
+|---|---|---|
+| **Save & restart** | ✅ (if set) | Stores the settings and restarts the bridge. |
+| **Restart** | ❌ | Restarts the bridge without saving. |
+| **Download config** | ❌ | Downloads the saved settings as `venusbridge-config.json`. The file contains **no passwords**. |
+| **Upload config** | ❌ | Loads a previously downloaded file into the form fields. Nothing is saved until you click **Save & restart**. Values missing in the file (e.g. from an older backup) are ignored and the corresponding fields keep their current value; an invalid file changes nothing. |
+
+If an admin password is set, the settings page shows a field **Current admin password**, which must be filled in for saving and for the firmware update. After a wrong password, further attempts are rejected for 2 seconds.
+
+**No password is required when the settings page is opened via the access point** (`http://192.168.4.1`). This way you can always regain access with the configuration button, e.g. if you forgot the admin password.
+
+Settings are kept across firmware updates; new parameters introduced by an update are added with their default values.
 
 ---
 
@@ -250,15 +271,15 @@ Open `http://venusbridge.local` or the IP address of the bridge.
 - **Status** (`/`) – live values of the battery, CT meter, system information (version, IP, WiFi signal, homee connections, uptime, free memory) and the last raw response of the battery. Refreshes every 5 s.
 - **Settings** (`/config`) – see [Settings](#settings) and firmware update.
 
-HTTP endpoints (no authentication – use the bridge only in a trusted network):
+HTTP endpoints. If an admin password is set, the protected endpoints expect it in the HTTP header `X-Auth` (URL-encoded) and answer `401` for a wrong password and `429` for further attempts within 2 seconds. Requests via the access point need no password. Use the bridge only in a trusted network – the connection is plain HTTP.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/status` | All live values as JSON |
-| GET | `/api/config` | Current settings as JSON (without WiFi password) |
-| POST | `/api/config` | Save settings (form-encoded, same fields as the settings page) and restart |
-| POST | `/api/restart` | Restart the bridge |
-| POST | `/update` | Firmware upload (multipart, field `firmware`) |
+| Method | Path | Protected | Description |
+|---|---|---|---|
+| GET | `/api/status` | ❌ | All live values as JSON |
+| GET | `/api/config` | ❌ | Current settings as JSON (without passwords); additionally `adminPwSet` and `authRequired` (password needed for this client) |
+| POST | `/api/config` | ✅ | Save settings (form-encoded, same fields as the settings page, plus `adminPw` and `adminPwClear=1`) and restart |
+| POST | `/api/restart` | ❌ | Restart the bridge |
+| POST | `/update` | ✅ | Firmware upload (multipart, field `firmware`) |
 
 ---
 
@@ -286,6 +307,17 @@ HTTP endpoints (no authentication – use the bridge only in a trusted network):
 ---
 
 ## Changelog
+
+### 0.09 (2026-10-18)
+
+- Marstek: while the battery is not reachable, the rest of the polling cycle is skipped, so only one probe request per polling interval is sent instead of the full cycle.
+- Marstek: receive buffer for the last raw response reserved in full size (avoids a later reallocation).
+
+### 0.08 (2026-10-18)
+
+- Optional **admin password** protecting *Save & restart* and the firmware update (web interface and PlatformIO OTA via `--auth`). Not required when the settings page is opened via the access point.
+- Passwords (WiFi and admin) are now stored XOR-obfuscated in the EEPROM instead of `/config.json`. An existing WiFi password is moved automatically on the first start after the update.
+- Settings page: new buttons **Restart** (without saving), **Download config** and **Upload config** (backup/restore of the settings as JSON, without passwords).
 
 ### 0.07 (2026-10-17)
 

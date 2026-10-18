@@ -2,7 +2,8 @@
 
 #include <Arduino.h>
 
-// Persistent settings, stored as /config.json on LittleFS
+// Persistent settings, stored as /config.json on LittleFS.
+// Passwords are not part of config.json, they are kept in the EEPROM (SecretStore).
 struct AppConfig
 {
     // WiFi
@@ -24,7 +25,11 @@ struct AppConfig
     String homeeId = "venusbridge";   // virtual homee name (homee ID when pairing, UDP discovery)
     String nodeName = "Venus E";      // homee device name (name of the device in homee)
 
+    // Security
+    String adminPassword;   // empty = no protection of saving / firmware update
+
     bool isWifiConfigured() const { return ssid.length() > 0; }
+    bool isAdminPasswordSet() const { return adminPassword.length() > 0; }
 };
 
 class ConfigStore

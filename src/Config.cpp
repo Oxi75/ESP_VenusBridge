@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
+#include "SecretStore.h"
+
 static const char *CONFIG_FILE = "/config.json";
 
 bool ConfigStore::begin()
@@ -24,6 +26,8 @@ bool ConfigStore::begin()
 
 bool ConfigStore::load(AppConfig &cfg)
 {
+    bool secretsValid = SecretStore::load(cfg.password, cfg.adminPassword);
+
     File f = LittleFS.open(CONFIG_FILE, "r");
     if (!f)
     {
@@ -41,7 +45,6 @@ bool ConfigStore::load(AppConfig &cfg)
     }
 
     cfg.ssid = doc["ssid"] | "";
-    cfg.password = doc["password"] | "";
     cfg.hostname = doc["hostname"] | cfg.hostname;
     cfg.dhcp = doc["dhcp"] | true;
     cfg.ip = doc["ip"] | "";
@@ -57,10 +60,21 @@ bool ConfigStore::load(AppConfig &cfg)
     if (cfg.pollInterval < 10)
         cfg.pollInterval = 10;
 
+    // Migration from <= 0.07: the WiFi password was stored in config.json.
+    // Move it to the EEPROM and remove it from the file.
+    if (!doc["password"].isNull())
+    {
+        if (!secretsValid)
+            cfg.password = doc["password"] | "";
+        Serial.println(F("[CFG] moving WiFi password from config.json to EEPROM"));
+        save(cfg);
+        return true;
+    }
+
     // Add parameters introduced by a firmware update with their defaults,
     // existing values (incl. WiFi) remain unchanged
-    static const char *const KEYS[] = {"ssid", "password", "hostname", "dhcp", "ip", "gateway", "subnet",
-                                       "dns", "marstekIp", "marstekPort", "pollInterval", "homeeId", "nodeName"};
+    static const char *const KEYS[] = {"ssid", "hostname", "dhcp", "ip", "gateway", "subnet", "dns",
+                                       "marstekIp", "marstekPort", "pollInterval", "homeeId", "nodeName"};
     for (const char *k : KEYS)
     {
         if (doc[k].isNull())
@@ -77,7 +91,6 @@ bool ConfigStore::save(const AppConfig &cfg)
 {
     JsonDocument doc;
     doc["ssid"] = cfg.ssid;
-    doc["password"] = cfg.password;
     doc["hostname"] = cfg.hostname;
     doc["dhcp"] = cfg.dhcp;
     doc["ip"] = cfg.ip;
@@ -99,10 +112,12 @@ bool ConfigStore::save(const AppConfig &cfg)
     size_t n = serializeJson(doc, f);
     f.close();
     Serial.printf("[CFG] config.json saved (%u bytes)\n", (unsigned)n);
-    return n > 0;
+    bool secretsOk = SecretStore::save(cfg.password, cfg.adminPassword);
+    return n > 0 && secretsOk;
 }
 
 void ConfigStore::erase()
 {
     LittleFS.remove(CONFIG_FILE);
+    SecretStore::erase();
 }

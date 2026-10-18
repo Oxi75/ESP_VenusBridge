@@ -83,6 +83,9 @@ static void buttonLoop()
 static void setupOta()
 {
     ArduinoOTA.setHostname(config.hostname.c_str());
+    // Same protection as the web interface (espota: upload_flags = --auth=<admin password>)
+    if (config.isAdminPasswordSet())
+        ArduinoOTA.setPassword(config.adminPassword.c_str());
     ArduinoOTA.onStart([]() {
         Serial.printf("[OTA] start (%s)\n", ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "file system");
     });

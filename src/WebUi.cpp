@@ -13,12 +13,47 @@
 #include "HomeeBridge.h"
 #include "MarstekClient.h"
 #include "NetManager.h"
+#include "SecretStore.h"
 #include "StateLock.h"
 #include "WebPages.h"
 
 #ifndef VB_VERSION
 #define VB_VERSION "dev"
 #endif
+
+static const size_t ADMIN_PW_MIN = 5;
+static const unsigned long AUTH_BLOCK_MS = 2000;
+
+// Decodes %XX sequences (the browser sends the password with encodeURIComponent)
+static String urlDecode(const String &in)
+{
+    String out;
+    out.reserve(in.length());
+    for (size_t i = 0; i < in.length(); i++)
+    {
+        char c = in[i];
+        if (c == '%' && i + 2 < in.length() &&isxdigit((unsigned char)in[i + 1]) && isxdigit((unsigned char)in[i + 2]))
+        {
+            char hex[3] = {in[i + 1], in[i + 2], 0};
+            out += (char)strtol(hex, nullptr, 16);
+            i += 2;
+        }
+        else
+            out += c;
+    }
+    return out;
+}
+
+// Comparison without early exit (timing does not reveal the matching prefix)
+static bool secureEquals(const String &a, const String &b)
+{
+    if (a.length() != b.length())
+        return false;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < a.length(); i++)
+        diff |= (uint8_t)a[i] ^ (uint8_t)b[i];
+    return diff == 0;
+}
 
 static void sendPage(AsyncWebServerRequest *req, const char *page, const char *type)
 {
@@ -52,18 +87,26 @@ void WebUi::begin(AppConfig &config, NetManager &netMgr, MarstekClient &client, 
         restartAt = millis() + 1000;
     });
 
-    // Firmware update via file upload
+    // Firmware update via file upload (password protected)
     server->on(
         "/update", HTTP_POST,
         [this](AsyncWebServerRequest *req) {
+            if (!checkAuth(req))
+                return;
             bool ok = !Update.hasError();
             req->send(ok ? 200 : 500, "text/plain", ok ? "OK, restarting..." : "Update failed");
             if (ok)
                 restartAt = millis() + 1000;
         },
-        [](AsyncWebServerRequest *req, const String &filename, size_t index, uint8_t *data, size_t len, bool final) {
+        [this](AsyncWebServerRequest *req, const String &filename, size_t index, uint8_t *data, size_t len, bool final) {
             if (index == 0)
             {
+                uploadAuthorized = authState(req) == Auth::Ok;
+                if (!uploadAuthorized)
+                {
+                    Serial.println(F("[WEB] firmware update rejected: not authorized"));
+                    return;
+                }
                 Serial.printf("[WEB] firmware update: %s\n", filename.c_str());
 #if defined(ESP8266)
                 Update.runAsync(true);
@@ -74,6 +117,8 @@ void WebUi::begin(AppConfig &config, NetManager &netMgr, MarstekClient &client, 
                 if (!Update.begin(maxSize))
                     Update.printError(Serial);
             }
+            if (!uploadAuthorized)
+                return;
             if (!Update.hasError() && Update.write(data, len) != len)
                 Update.printError(Serial);
             if (final)
@@ -104,6 +149,46 @@ void WebUi::loop()
         Serial.println(F("[WEB] restarting"));
         delay(100);
         ESP.restart();
+    }
+}
+
+// Request arrived via the access point interface (configuration mode)
+bool WebUi::isViaAp(AsyncWebServerRequest *req) const
+{
+    return net->isApActive() && req->client() && req->client()->localIP() == WiFi.softAPIP();
+}
+
+bool WebUi::isAuthRequired(AsyncWebServerRequest *req) const
+{
+    return cfg->isAdminPasswordSet() && !isViaAp(req);
+}
+
+WebUi::Auth WebUi::authState(AsyncWebServerRequest *req) const
+{
+    if (!isAuthRequired(req))
+        return Auth::Ok;
+    if (authBlockedUntil != 0 && (long)(millis() - authBlockedUntil) < 0)
+        return Auth::Blocked;
+    const AsyncWebHeader *h = req->getHeader("X-Auth");
+    if (h && secureEquals(urlDecode(h->value()), cfg->adminPassword))
+        return Auth::Ok;
+    return Auth::Denied;
+}
+
+bool WebUi::checkAuth(AsyncWebServerRequest *req)
+{
+    switch (authState(req))
+    {
+    case Auth::Ok:
+        return true;
+    case Auth::Blocked:
+        req->send(429, "text/plain", "Too many attempts, please wait a moment");
+        return false;
+    default:
+        Serial.println(F("[WEB] wrong admin password"));
+        authBlockedUntil = (millis() + AUTH_BLOCK_MS) | 1;   // 0 = not blocked
+        req->send(401, "text/plain", "Wrong admin password");
+        return false;
     }
 }
 
@@ -176,7 +261,9 @@ void WebUi::handleGetConfig(AsyncWebServerRequest *req)
     doc["pollInterval"] = cfg->pollInterval;
     doc["homeeId"] = cfg->homeeId;
     doc["nodeName"] = cfg->nodeName;
-    // the password is intentionally not returned
+    doc["adminPwSet"] = cfg->isAdminPasswordSet();
+    doc["authRequired"] = isAuthRequired(req);
+    // the passwords are intentionally not returned
 
     AsyncResponseStream *res = req->beginResponseStream("application/json");
     serializeJson(doc, *res);
@@ -185,6 +272,9 @@ void WebUi::handleGetConfig(AsyncWebServerRequest *req)
 
 void WebUi::handleSetConfig(AsyncWebServerRequest *req)
 {
+    if (!checkAuth(req))
+        return;
+
     auto arg = [req](const char *name) -> String {
         const AsyncWebParameter *p = req->getParam(name, true);
         return p ? p->value() : String();
@@ -206,11 +296,21 @@ void WebUi::handleSetConfig(AsyncWebServerRequest *req)
     c.pollInterval = (uint16_t)arg("pollInterval").toInt();
     c.homeeId = arg("homeeId");
     c.nodeName = arg("nodeName");
+    String adminPw = arg("adminPw");
+    if (arg("adminPwClear") == "1")
+        c.adminPassword = "";
+    else if (adminPw.length() > 0)
+        c.adminPassword = adminPw;
 
     // Validation
     IPAddress tmp;
     if (c.ssid.length() == 0)
         return req->send(400, "text/plain", "SSID missing");
+    if (c.password.length() > SecretStore::WIFI_PW_MAX)
+        return req->send(400, "text/plain", "WiFi password too long");
+    if (c.adminPassword.length() > 0 &&
+        (c.adminPassword.length() < ADMIN_PW_MIN || c.adminPassword.length() > SecretStore::ADMIN_PW_MAX))
+        return req->send(400, "text/plain", "Admin password must have 5 to 32 characters");
     if (!c.dhcp && (!tmp.fromString(c.ip) || !tmp.fromString(c.gateway) || !tmp.fromString(c.subnet)))
         return req->send(400, "text/plain", "Static IP, gateway or subnet mask invalid");
     if (c.marstekIp.length() > 0 && !tmp.fromString(c.marstekIp))

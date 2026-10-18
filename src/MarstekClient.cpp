@@ -7,6 +7,7 @@ static const unsigned long REQUEST_TIMEOUT_MS = 10000;     // no response -> err
 static const unsigned long RETRANSMIT_MS[] = {500, 2500, 5000};
 static const uint8_t FAILS_UNTIL_OFFLINE = 3;
 static const uint32_t SLOW_POLL_EVERY = 10;                // Bat/Device only every n-th cycle
+static const size_t RX_BUF_SIZE = 768;                     // max. size of a received datagram
 
 static const char *MODE_NAMES[] = {"Auto", "AI", "UPS", "Manual", "Passive"};
 
@@ -46,7 +47,7 @@ void MarstekClient::begin(const String &ip, uint16_t p, uint16_t pollIntervalSec
     // listen locally on the same port and send from there.
     udp.begin(port);
     txBuf.reserve(200);
-    lastRawResponse.reserve(256);
+    lastRawResponse.reserve(RX_BUF_SIZE);
     lastCycle = millis() - pollIntervalMs;   // start the first cycle immediately
     Serial.printf("[MST] target %s:%u, interval %lus\n", target.toString().c_str(), port, pollIntervalMs / 1000);
 }
@@ -201,11 +202,19 @@ void MarstekClient::requestFailed()
         st.changeCounter++;
         Serial.println(F("[MST] battery not reachable"));
     }
+    // Backoff while not reachable: drop the rest of the cycle, the first request
+    // of the next cycle (after the polling interval) acts as probe
+    if (!st.online && qLen > 0)
+    {
+        Serial.printf("[MST] battery not reachable, skipping %u requests of this cycle\n", (unsigned)qLen);
+        qHead = 0;
+        qLen = 0;
+    }
 }
 
 void MarstekClient::handlePacket()
 {
-    char buf[768];
+    char buf[RX_BUF_SIZE];
     IPAddress from = udp.remoteIP();
     int len = udp.read(buf, sizeof(buf) - 1);
     if (len <= 0)
