@@ -2,7 +2,7 @@
 
 Read and control a **Marstek Venus** plug-in battery from the **homee** smart home system – locally, without cloud – using a small ESP32/ESP8266 board as a bridge.
 
-**Current version: 0.09** – see the [Changelog](#changelog).
+**Current version: 1.00** – see the [Changelog](#changelog). Prebuilt firmware: [GitHub Releases](https://github.com/Oxi75/ESP_VenusBridge/releases).
 
 ---
 
@@ -69,7 +69,7 @@ All settings are stored on the ESP in `/config.json` (LittleFS). The passwords (
 - **Fixed IP address of the battery** – recommended (e.g. DHCP reservation in your router), because the bridge addresses the battery by IP.
 - **homee** – a homee Brain/Cube with support for "homee in homee".
 - **2.4 GHz WiFi** – the ESP boards do not support 5 GHz.
-- **PlatformIO** (e.g. as VS Code extension) to build and flash the firmware.
+- **Firmware** – either a prebuilt binary from the [GitHub Releases](https://github.com/Oxi75/ESP_VenusBridge/releases) page (flashed with `esptool` or a browser-based flasher), or **PlatformIO** (e.g. as VS Code extension) to build and flash the firmware yourself.
 
 ---
 
@@ -91,6 +91,30 @@ No further wiring is required: the bridge only needs power (USB 5 V) and WiFi. I
 ---
 
 ## Flashing the firmware
+
+### Prebuilt binaries (GitHub Releases)
+
+Every release on the [GitHub Releases](https://github.com/Oxi75/ESP_VenusBridge/releases) page provides ready-to-flash binaries, so you do not need PlatformIO:
+
+| File | Board | Use |
+|---|---|---|
+| `VenusBridge-<version>-esp32c3-supermini-factory.bin` | ESP32-C3 SuperMini | **First installation via USB** – complete image (bootloader, partition table, firmware), flash to offset `0x0` |
+| `VenusBridge-<version>-esp32c3-supermini.bin` | ESP32-C3 SuperMini | **Update** via the web interface (Settings → Firmware update). Do **not** flash this file to `0x0`. |
+| `VenusBridge-<version>-esp12e-UNTESTED.bin` | ESP8266 ESP-12E | First installation via USB (offset `0x0`) **and** update via the web interface. ⚠️ Not tested. |
+
+First installation via USB with [esptool](https://github.com/espressif/esptool) (`pip install esptool`; replace `COM5` with your serial port):
+
+```sh
+# ESP32-C3 SuperMini (if the port is not found: hold BOOT while plugging in USB)
+esptool --chip esp32c3 --port COM5 write-flash 0x0 VenusBridge-1.00-esp32c3-supermini-factory.bin
+
+# ESP8266 ESP-12E (untested)
+esptool --chip esp8266 --port COM5 write-flash 0x0 VenusBridge-1.00-esp12e-UNTESTED.bin
+```
+
+Alternatively, use the browser-based [ESP Tool](https://espressif.github.io/esptool-js/) (Chrome/Edge): connect, enter flash address `0x0`, choose the file and click *Program*.
+
+Afterwards continue with the [first setup](#first-setup-and-access-point-mode).
 
 ### Via USB (first installation)
 
@@ -125,7 +149,7 @@ upload_flags = --auth=<admin password>
 
 > ⚠️ The firmware update via the web interface has **not been tested** yet.
 
-Build the firmware (`pio run -e <env>`), open **Settings → Firmware update** in the web interface, choose `.pio/build/<env>/firmware.bin` and click **Upload**. The bridge restarts automatically. If an admin password is set, enter it in the *Current admin password* field first.
+Build the firmware (`pio run -e <env>`) or download it from the [GitHub Releases](https://github.com/Oxi75/ESP_VenusBridge/releases) page, open **Settings → Firmware update** in the web interface, choose `.pio/build/<env>/firmware.bin` or the release file `VenusBridge-<version>-<env>.bin` (**not** the `-factory` image) and click **Upload**. The bridge restarts automatically. If an admin password is set, enter it in the *Current admin password* field first.
 
 ---
 
@@ -239,7 +263,7 @@ After pairing, homee shows one device (default name *Venus E*) with the followin
 | KI-Optimierung | Mode switch: AI optimization | on/off |
 | UPS | Mode switch: UPS | on/off |
 | Manuell | Mode switch: manual (display only) | on/off |
-| Firmware Bridge | Firmware version of the bridge (e.g. 0.07) | – |
+| Firmware Bridge | Firmware version of the bridge (e.g. 1.00) | – |
 | Firmware Speicher | Firmware version of the battery (`ver` from `Marstek.GetDevice`) | – |
 
 ### Operating mode
@@ -307,6 +331,13 @@ HTTP endpoints. If an admin password is set, the protected endpoints expect it i
 ---
 
 ## Changelog
+
+### 1.00 (2026-10-18)
+
+First stable release. Contains all changes up to 0.09, no functional changes compared to 0.09.
+
+- Prebuilt binaries are now attached to the [GitHub release](https://github.com/Oxi75/ESP_VenusBridge/releases): factory image and update image for the ESP32-C3 SuperMini, image for the ESP8266 ESP-12E (untested).
+- README: new section [Prebuilt binaries](#prebuilt-binaries-github-releases) with flash instructions for esptool and the browser-based ESP Tool.
 
 ### 0.09 (2026-10-18)
 
